@@ -4,6 +4,27 @@ import cv2
 import numpy as np
 import RPi.GPIO as GPIO
 
+# 全局变量用于存储线检测结果和错误值
+global follow, error
+follow = None
+error = None
+
+class LaneDetectorThread(threading.Thread):
+    def __init__(self):
+        super().__init__()
+
+    def run(self):
+        global follow, error
+        lane_detector = LaneDetector()  # 创建车道检测器实例
+        while True:
+            frame = lane_detector.read_frame()  # 读取图像帧
+            if frame is None:
+                continue
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            ret, mask = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
+            follow, error = lane_detector.mid(mask)  # 执行线检测
+
+
 class LaneDetector:
     def __init__(self, device=0, width=640, height=480):
         self.cap = cv2.VideoCapture(device)
@@ -21,23 +42,8 @@ class LaneDetector:
             return None
         return frame
 
-    def detect_lane(self):
-        frame = self.read_frame()
-        if frame is None:
-            return None, None
-
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)  
-        ret, mask = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)  
-
-        follow = np.zeros_like(mask)  
-        follow, error = self._mid(follow, mask)  
-
-        return follow, error
-
-    def release(self):
-        self.cap.release()
-
-    def _mid(self, follow, mask):
+    def mid(self, mask):
+        follow = np.zeros_like(mask)
         halfWidth = follow.shape[1] // 2
         half = halfWidth  
         for y in range(follow.shape[0] - 1, -1, -1):
@@ -63,109 +69,68 @@ class LaneDetector:
 
         return follow, error  
 
+
 class MotorController(threading.Thread):
     def __init__(self, left_pins, right_pins, pwm_frequency=100):
         super().__init__()
-        # 定义电机
-        self.LEFT = 0
-        self.RIGHT = 1
-        
-        # 初始化引脚
-        self.PWMA, self.AIN1, self.AIN2, self.STBY = left_pins
-        self.PWMB, self.BIN1, self.BIN2, _ = right_pins
-        
-        # 设置 GPIO 模式
-        GPIO.setmode(GPIO.BCM)
-        
-        # 设置引脚模式
-        for pin in (self.PWMA, self.AIN1, self.AIN2, self.STBY, self.PWMB, self.BIN1, self.BIN2):
-            GPIO.setup(pin, GPIO.OUT)
-        
-        # 设置 PWM
-        self.pwm_a = GPIO.PWM(self.PWMA, pwm_frequency)
-        self.pwm_b = GPIO.PWM(self.PWMB, pwm_frequency)
-        
-        # 初始化 PWM
-        self.pwm_a.start(0)
-        self.pwm_b.start(0)
-
-        # PID参数
+        # 初始化PWM频率
+        self.pwm_frequency = pwm_frequency
+        # 初始化PID参数等
         self.Kp = 0.1
         self.Ki = 0
         self.Kd = 0
         self.prev_error = 0
         self.integral = 0
 
+        # 引脚定义
+        self.left_pins = left_pins
+        self.right_pins = right_pins
+
+        # 设置 GPIO 模式
+        GPIO.setmode(GPIO.BCM)
+
+        # 设置引脚模式
+        GPIO.setup(self.left_pins, GPIO.OUT)
+        GPIO.setup(self.right_pins, GPIO.OUT)
+
+        # 设置 PWM
+        self.pwm_left = GPIO.PWM(self.left_pins[0], self.pwm_frequency)  
+        self.pwm_right = GPIO.PWM(self.right_pins[0], self.pwm_frequency)  
+
+        # 初始化 PWM
+        self.pwm_left.start(0)
+        self.pwm_right.start(0)
+
     def run(self):
+        global follow, error
         try:
             while True:
-                # 测试代码
-                self.forward(50)  # 前进，速度50
-                time.sleep(2)
+                # 获取线检测结果和错误值
+                if follow is None or error is None:
+                    time.sleep(0.01)  # 等待线检测结果
+                    continue
 
-                self.backward(50)  # 后退，速度50
-                time.sleep(2)
+                # 根据错误值进行差速控制
+                pid_output = self.pid_control(error)
+                left_speed = 50 + pid_output
+                right_speed = 50 - pid_output
 
-                self.stop()  # 停止
-                time.sleep(2)
+                # 控制电机
+                GPIO.output(self.left_pins[1], GPIO.HIGH if left_speed >= 0 else GPIO.LOW)
+                GPIO.output(self.left_pins[2], GPIO.LOW if left_speed >= 0 else GPIO.HIGH)
+                GPIO.output(self.right_pins[1], GPIO.HIGH if right_speed >= 0 else GPIO.LOW)
+                GPIO.output(self.right_pins[2], GPIO.LOW if right_speed >= 0 else GPIO.HIGH)
 
+                self.pwm_left.ChangeDutyCycle(abs(left_speed))  
+                self.pwm_right.ChangeDutyCycle(abs(right_speed))  
+
+                time.sleep(0.01)  # 控制频率
         except KeyboardInterrupt:
-            # 清理 GPIO 引脚
             self.cleanup()
 
-    # 正转
-    def forward(self, speed):
-        lane_detector = LaneDetector()  # 创建车道检测器实例
-        follow, error = lane_detector.detect_lane()  # 检测车道
-        if error is None:
-            return
-        
-        # PID控制
-        pid_output = self.pid_control(error)
-        
-        left_speed = speed + pid_output
-        right_speed = speed - pid_output
-        
-        GPIO.output(self.STBY, GPIO.HIGH)
-        GPIO.output(self.AIN1, GPIO.HIGH)
-        GPIO.output(self.AIN2, GPIO.LOW)
-        GPIO.output(self.BIN1, GPIO.HIGH)
-        GPIO.output(self.BIN2, GPIO.LOW)
-        self.pwm_a.start(left_speed)
-        self.pwm_b.start(right_speed)
-    
-    # 反转
-    def backward(self, speed):
-        lane_detector = LaneDetector()  # 创建车道检测器实例
-        follow, error = lane_detector.detect_lane()  # 检测车道
-        if error is None:
-            return
-        
-        # PID控制
-        pid_output = self.pid_control(error)
-        
-        left_speed = speed + pid_output
-        right_speed = speed - pid_output
-        
-        GPIO.output(self.STBY, GPIO.HIGH)
-        GPIO.output(self.AIN1, GPIO.LOW)
-        GPIO.output(self.AIN2, GPIO.HIGH)
-        GPIO.output(self.BIN1, GPIO.LOW)
-        GPIO.output(self.BIN2, GPIO.HIGH)
-        self.pwm_a.start(left_speed)
-        self.pwm_b.start(right_speed)
-    
-    # 停止
-    def stop(self):
-        GPIO.output(self.STBY, GPIO.LOW)
-        self.pwm_a.stop()
-        self.pwm_b.stop()
-    
-    # 清理 GPIO 引脚
     def cleanup(self):
         GPIO.cleanup()
 
-    # PID控制
     def pid_control(self, error):
         self.integral += error
         derivative = error - self.prev_error
@@ -175,13 +140,20 @@ class MotorController(threading.Thread):
 
 if __name__ == "__main__":
     try:
+        # 创建线检测线程并启动
+        lane_detector_thread = LaneDetectorThread()
+        lane_detector_thread.start()
+
         # 创建电机控制线程并启动
-        left_pins = (12, 4, 3, 17)
-        right_pins = (13, 27, 22, 17)
+        left_pins = (12, 4, 3, 17)  # BCD引脚定义
+        right_pins = (13, 27, 22, 17)  # BCD引脚定义
         motor_controller_thread = MotorController(left_pins, right_pins)
         motor_controller_thread.start()
+
+        while True:
+            # 主线程持续运行
+            pass
     except Exception as e:
         print(f"发生错误：{e}")
-    except KeyboardInterrupt:
-        motor_controller_thread.cleanup()
-        GPIO.cleanup()
+    finally:
+        GPIO.cleanup()  # 最终清理GPIO引脚
