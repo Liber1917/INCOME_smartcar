@@ -1,9 +1,12 @@
 #coding=utf-8
 import cv2
 
-def main():
+def camera():
     # 打开摄像头
-    cap = cv2.VideoCapture(0,cv2.CAP_V4L2)
+    # 尝试开Gstreamer进行硬件加速
+    # cap = cv2.VideoCapture(0,cv2.CAP_V4L2)
+    gst_str = "v4l2src device=/dev/video0 ! video/x-raw, width=640, height=480, format=(string)YUY2 ! videoconvert ! appsink"
+    cap = cv2.VideoCapture(gst_str, cv2.CAP_GSTREAMER)
 
     # 检查摄像头是否成功打开
     if not cap.isOpened():
@@ -36,4 +39,4 @@ def main():
         cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    main()
+    camera()
