@@ -1,45 +1,77 @@
 import cv2
+import numpy as np
 
 class Camera:
-    def __init__(self, device="/dev/video0", width=640, height=480):
-        # Gstreamer字符串用于硬件加速
-        gst_str = f"v4l2src device={device} ! video/x-raw, width={width}, height={height}, format=(string)YUY2 ! videoconvert ! appsink"
-        # 打开摄像头
-        self.cap = cv2.VideoCapture(gst_str, cv2.CAP_GSTREAMER)
-        
-        # 检查摄像头是否成功打开
+    def __init__(self, device=0, width=640, height=480):
+        self.cap = cv2.VideoCapture(device)
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+
         if not self.cap.isOpened():
             print("无法打开摄像头")
-            return
-        
-        # 设置窗口大小
-        cv2.namedWindow('Camera', cv2.WINDOW_NORMAL)
-        cv2.resizeWindow('Camera', width, height)
+            raise ValueError("无法打开摄像头")
 
-    def start_capture(self):
-        try:
-            while True:
-                # 读取摄像头画面
-                ret, frame = self.cap.read()
+        # cv2.namedWindow('Camera', cv2.WINDOW_NORMAL)
 
-                # 检查是否成功读取画面
-                if not ret:
-                    print("无法读取画面")
-                    break
+    def read_frame(self):
+        ret, frame = self.cap.read()
+        if not ret:
+            print("无法读取画面")
+            return None
+        return frame
 
-                # 在窗口中显示画面
-                cv2.imshow('Camera', frame)
+    def release(self):
+        self.cap.release()
+        # cv2.destroyAllWindows()
 
-                # 等待按键事件，如果按下 'q' 键则退出循环
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
-        finally:
-            # 释放摄像头
-            self.cap.release()
-            # 关闭所有窗口
-            cv2.destroyAllWindows()
+# 中线拟合
+def mid(follow, mask):
+    halfWidth = follow.shape[1] // 2
+    half = halfWidth  
+    for y in range(follow.shape[0] - 1, -1, -1):
+        if (mask[y][max(0, half - halfWidth):half] == np.zeros_like(mask[y][max(0, half - halfWidth):half])).all():  
+            left = max(0, half - halfWidth)  
+        else:
+            left = np.average(np.where(mask[y][0:half] == 255))  
+        if (mask[y][half:min(follow.shape[1], half + halfWidth)] == np.zeros_like(mask[y][half:min(follow.shape[1], half + halfWidth)])).all(): 
+            right = min(follow.shape[1], half + halfWidth)  
+        else:
+            right = np.average(np.where(mask[y][half:follow.shape[1]] == 255)) + half  
+
+        mid = (left + right) // 2  
+        half = int(mid)  
+        follow[y, int(mid)] = 255  
+
+        if y == 360:  
+            mid_output = int(mid)
+
+    cv2.circle(follow, (mid_output, 360), 5, 255, -1)  
+
+    error = follow.shape[1] // 2 - mid_output  
+
+    return follow, error  
 
 if __name__ == "__main__":
-    # 创建摄像头实例并开始捕获
-    camera = Camera()
-    camera.start_capture()
+    try:
+        camera = Camera()  # 创建摄像头实例
+        while True:
+            frame = camera.read_frame()  # 读取摄像头画面
+            if frame is None:
+                break
+
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)  
+            ret, mask = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)  
+
+            follow = np.zeros_like(mask)  
+            follow, error = mid(follow, mask)  
+
+            # cv2.imshow('Camera', frame)
+            # cv2.waitKey(1)
+
+            # # 在摄像头窗口中绘制拟合出的中线
+            # cv2.imshow('Camera', follow)
+            # cv2.waitKey(1)
+    except Exception as e:
+        print(f"发生错误：{e}")
+    finally:
+        camera.release()  # 释放摄像头资源
