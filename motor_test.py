@@ -1,6 +1,6 @@
 #coding=utf-8
 import RPi.GPIO as GPIO
-# import time
+import time
 
 # 定义电机
 LEFT = 0
@@ -66,6 +66,10 @@ def stop(mt):
 pwm_a.start(0)
 pwm_b.start(0)
 
+forward(LEFT, 50)  # 左电机正转，速度50
+forward(RIGHT, 50)  # 右电机正转，速度50
+time.sleep(2)
+GPIO.cleanup()
 # # 测试代码
 # try:
 #     while True:

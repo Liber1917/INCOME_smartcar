@@ -61,6 +61,9 @@ if __name__ == "__main__":
 
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)  
             ret, mask = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)  
+            
+            cv2.imshow('Mask', mask)  # 显示掩模图像
+            cv2.waitKey(1)
 
             follow = np.zeros_like(mask)  
             follow, error = mid(follow, mask)  
@@ -68,9 +71,9 @@ if __name__ == "__main__":
             # cv2.imshow('Camera', frame)
             # cv2.waitKey(1)
 
-            # # 在摄像头窗口中绘制拟合出的中线
-            # cv2.imshow('Camera', follow)
-            # cv2.waitKey(1)
+            # 在摄像头窗口中绘制拟合出的中线
+            cv2.imshow('Camera', follow)
+            cv2.waitKey(1)
     except Exception as e:
         print(f"发生错误：{e}")
     finally:

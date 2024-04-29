@@ -29,10 +29,11 @@ def setup():
     GPIO.setup(ENCODER_R, GPIO.IN)  # 编码器引脚
     GPIO.setup(DIRECTION_R, GPIO.IN)  # 编码器引脚
 
-
 def loop():
     global Velocity_L, Velocity_R
     while True:
+        print("ENCODER_L",GPIO.input(ENCODER_L),GPIO.input(ENCODER_R),"ENCODER_R")
+        print("DIRECTION_L",GPIO.input(DIRECTION_L),GPIO.input(DIRECTION_R),"DIRECTION_R")
         # 读取编码器数据
         if GPIO.input(ENCODER_L) == GPIO.LOW:
             if GPIO.input(DIRECTION_L) == GPIO.LOW:
